@@ -101,6 +101,8 @@ model_reasoning_effort = "medium"
 disable_response_storage = true
 preferred_auth_method = "apikey"
 personality = "pragmatic"
+approval_policy = "on-request"
+sandbox_mode = "read-only"
 
 [model_providers.crs]
 name = "crs"
