@@ -13,15 +13,16 @@ if [[ $# -lt 2 ]]; then
     echo "  -y        - Skip confirmation prompts"
     echo "  base_url  - The OpenAI-compatible API base URL"
     echo "  api_key   - The API key"
-    echo "  model     - Model name (default: gpt-5.4)"
+    echo "  model     - Model name (default: gpt-5.5)"
     exit 1
 fi
 
 BASE_URL="$1"
 API_KEY="$2"
-MODEL="${3:-gpt-5.4}"
+MODEL="${3:-gpt-5.5}"
 
 CODEX_DIR="$HOME/.codex"
+CODEX_WAS_INSTALLED=0
 
 # ---------------------------------------------------------------------------
 # Install codex if not present
@@ -30,6 +31,38 @@ CODEX_DIR="$HOME/.codex"
 install_codex() {
     echo "Installing @openai/codex via npm..."
     npm i -g @openai/codex
+}
+
+prompt_yes_no() {
+    local prompt="$1"
+    local answer=""
+
+    if [[ "$YES" -eq 1 ]]; then
+        return 0
+    fi
+
+    # stdin may be a pipe (curl|bash), so read from the terminal directly.
+    if [[ -r /dev/tty ]]; then
+        read -r -p "$prompt" answer </dev/tty
+    else
+        echo "No terminal available for confirmation." >&2
+        return 1
+    fi
+
+    [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+backup_codex_dir() {
+    local backup_dir="${CODEX_DIR}-backup-$(date '+%Y%m%d%H%M%S')"
+    local index=1
+
+    while [[ -e "$backup_dir" ]]; do
+        backup_dir="${CODEX_DIR}-backup-$(date '+%Y%m%d%H%M%S')-$index"
+        index=$((index + 1))
+    done
+
+    echo "Backing up existing $CODEX_DIR to $backup_dir"
+    mv "$CODEX_DIR" "$backup_dir"
 }
 
 load_nvm() {
@@ -69,6 +102,7 @@ if ! command -v codex &>/dev/null; then
         install_nvm_and_node
     fi
 else
+    CODEX_WAS_INSTALLED=1
     echo "codex is already installed: $(command -v codex)"
 fi
 
@@ -77,21 +111,18 @@ fi
 # ---------------------------------------------------------------------------
 
 if [[ -d "$CODEX_DIR" ]]; then
-    if [[ "$YES" -eq 0 ]]; then
-        # stdin may be a pipe (curl|bash), so read from the terminal directly
-        if [[ -t 0 ]] || [[ -c /dev/tty ]]; then
-            read -r -p "$CODEX_DIR already exists. Overwrite config? [y/N] " REPLY </dev/tty
-        else
-            REPLY="n"
-        fi
-        if [[ ! "$REPLY" =~ ^[Yy]$ ]]; then
-            echo "Aborted. Existing config left unchanged."
-            exit 0
-        fi
+    if [[ "$CODEX_WAS_INSTALLED" -eq 1 ]]; then
+        echo "Existing codex config detected at $CODEX_DIR."
+    else
+        echo "Existing $CODEX_DIR detected."
     fi
-    BACKUP_DIR="${CODEX_DIR}-$(date '+%Y%m%d%H%M%S')"
-    echo "Backing up existing $CODEX_DIR to $BACKUP_DIR"
-    mv "$CODEX_DIR" "$BACKUP_DIR"
+
+    if ! prompt_yes_no "Overwrite existing codex config with this setup? A backup will be created first. [y/N] "; then
+        echo "Aborted. Existing config left unchanged."
+        exit 0
+    fi
+
+    backup_codex_dir
 fi
 
 mkdir -p "$CODEX_DIR"
@@ -115,18 +146,29 @@ echo "Written: $CODEX_DIR/auth.json"
 cat > "$CODEX_DIR/config.toml" <<EOF
 model_provider = "crs"
 model = "$MODEL"
-model_reasoning_effort = "medium"
+model_reasoning_effort = "high"
 disable_response_storage = true
 preferred_auth_method = "apikey"
 personality = "pragmatic"
 approval_policy = "on-request"
 sandbox_mode = "read-only"
+suppress_unstable_features_warning = true
+model_reasoning_summary = "detailed"
 
 [model_providers.crs]
 name = "crs"
 base_url = "$BASE_URL"
 wire_api = "responses"
 requires_openai_auth = true
+
+[features]
+goals = true
+
+[tui]
+status_line = ["model-with-reasoning", "current-dir", "model", "project-name", "git-branch", "run-state", "context-remaining", "context-used", "five-hour-limit", "weekly-limit", "codex-version", "context-window-size", "used-tokens", "total-input-tokens", "total-output-tokens", "session-id", "fast-mode", "thread-title", "task-progress"]
+
+[tui.model_availability_nux]
+"gpt-5.5" = 2
 EOF
 
 echo "Written: $CODEX_DIR/config.toml"
